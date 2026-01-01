@@ -462,29 +462,27 @@ export default function EmUniGame() {
         setTutorialStep((s) => s + 1);
         break;
       }
-      case 'play-right':{
+      case 'play-right': {
         if (!selectedCard) {
           setMessage('Select a card first!');
           return;
         }
-        
-        // FIX: Actually play the card in tutorial
-        setPlayerHand(prev => prev.filter(c => c.id !== selectedCard.id));
+
+        // Play the selected card to the right in the tutorial
+        setPlayerHand((prev) => prev.filter((c) => c.id !== selectedCard.id));
         const newChain = [...chain, selectedCard];
         setChain(newChain);
-        
+
         // Check for UNIFY bonus
-        const adjacentToWiggle = newChain.length >= 2 && 
-          newChain[newChain.length - 2].type === CARD_TYPES.WIGGLE;
-        
+        const adjacentToWiggle = newChain.length >= 2 && newChain[newChain.length - 2].type === CARD_TYPES.WIGGLE;
+
         if (adjacentToWiggle && selectedCard.type !== CARD_TYPES.CHAOS) {
           setShowUnifyModal(true);
         } else {
           setSelectedCard(null);
-          setTutorialStep(s => s + 1);
+          setTutorialStep((s) => s + 1);
         }
         break;
-
       }
       case 'unify-accept': {
         // draw 2 in tutorial
@@ -635,16 +633,19 @@ export default function EmUniGame() {
   const handleCardClick = (card) => {
     if (currentPlayer !== 'player') return;
 
-    if (turnCount === 1) {
+    const isFirstTurn = turnCount === 1;
+
+    let prompt = 'Click LEFT or RIGHT to play this card.';
+
+    if (isFirstTurn) {
       // First turn: draw card
       drawCard(true);
       setTurnCount(2);
-      setMessage('Now play a card to start the chain!');
-     // return;
+      prompt = 'Card drawn! Now choose where to place your first card.';
     }
 
     setSelectedCard(card);
-    setMessage('Click LEFT or RIGHT to play this card.');
+    setMessage(prompt);
   };
 
   const handleChainEndClick = (position) => {
@@ -812,33 +813,33 @@ export default function EmUniGame() {
               ${tutorialSteps[tutorialStep].highlight === 'chain' ? 'border-cyan-400 ring-4 ring-cyan-400/50' : 'border-white/10'}
             `}
             >
-              {chain.length === 0 ? (
-                <div className="text-center text-gray-500 py-12">Empty chain - play your first card!</div>
-              ) : (
-                <div className="flex gap-4 overflow-x-auto pb-4">
-                  <div className="flex-shrink-0 w-24 h-36 border-4 border-dashed rounded-lg flex items-center justify-center text-sm font-bold border-gray-600 bg-gray-800/20">
-                    ← LEFT
-                  </div>
+              <div className="flex gap-4 overflow-x-auto pb-4 items-center">
+                <div className="flex-shrink-0 w-24 h-36 border-4 border-dashed rounded-lg flex items-center justify-center text-sm font-bold border-gray-600 bg-gray-800/20">
+                  ← LEFT
+                </div>
 
-                  {chain.map((card, idx) => (
-                    <Card key={`${card.id}-${idx}`} card={card} disabled />
-                  ))}
+                {chain.length === 0 ? (
+                  <div className="flex-1 text-center text-gray-500 py-12">Empty chain - play your first card!</div>
+                ) : (
+                  chain.map((card, idx) => <Card key={`${card.id}-${idx}`} card={card} disabled />)
+                )}
 
-                  <button
-                    onClick={() => tutorialSteps[tutorialStep].allowedAction === 'play-right' && handleTutorialAction('play-right')}
-                    disabled={tutorialSteps[tutorialStep].allowedAction !== 'play-right'}
-                    className={`
+                <button
+                  onClick={() =>
+                    tutorialSteps[tutorialStep].allowedAction === 'play-right' && handleTutorialAction('play-right')
+                  }
+                  disabled={tutorialSteps[tutorialStep].allowedAction !== 'play-right'}
+                  className={`
                       flex-shrink-0 w-24 h-36 border-4 border-dashed rounded-lg
                       flex items-center justify-center text-sm font-bold
                       ${tutorialSteps[tutorialStep].allowedAction === 'play-right'
                         ? 'border-cyan-400 bg-cyan-400/10 hover:bg-cyan-400/20 cursor-pointer animate-pulse' 
                         : 'border-gray-600 bg-gray-800/20'}
                     `}
-                  >
-                    RIGHT →
-                  </button>
-                </div>
-              )}
+                >
+                  RIGHT →
+                </button>
+              </div>
             </div>
           </div>
 
@@ -899,43 +900,37 @@ export default function EmUniGame() {
           <div className="mb-8">
             <div className="text-sm text-gray-400 mb-2">The Chain ({chain.length} cards)</div>
             <div className="bg-black/30 rounded-lg p-6 min-h-48 border-2 border-white/10">
-              {chain.length === 0 ? (
-                <div className="text-center text-gray-500 py-12">Empty chain - play your first card!</div>
-              ) : (
-                <div className="flex gap-4 overflow-x-auto pb-4">
-  <button 
-    onClick={() => handleChainEndClick('left')}
-    disabled={!selectedCard || currentPlayer !== 'player'}
-    className={`flex-shrink-0 w-24 h-36 border-4 border-dashed rounded-lg flex items-center justify-center text-sm font-bold ${
-      selectedCard && currentPlayer === 'player' 
-        ? 'border-cyan-400 bg-cyan-400/10 hover:bg-cyan-400/20 cursor-pointer' 
-        : 'border-gray-600 bg-gray-800/20'
-    }`}
-  >
-    LEFT
-  </button>
-  
-  {chain.length === 0 ? (
-    <div className="flex-1 text-center text-gray-500 py-12">Empty chain - play your first card!</div>
-  ) : (
-    chain.map((card, idx) => <Card key={card.id + '-' + idx} card={card} disabled />)
-  )}
-  
-  <button 
-    onClick={() => handleChainEndClick('right')}
-    disabled={!selectedCard || currentPlayer !== 'player'}
-    className={`flex-shrink-0 w-24 h-36 border-4 border-dashed rounded-lg flex items-center justify-center text-sm font-bold ${
-      selectedCard && currentPlayer === 'player' 
-        ? 'border-cyan-400 bg-cyan-400/10 hover:bg-cyan-400/20 cursor-pointer' 
-        : 'border-gray-600 bg-gray-800/20'
-    }`}
-  >
-    RIGHT
-  </button>
-</div>
+              <div className="flex gap-4 overflow-x-auto pb-4 items-center">
+                <button
+                  onClick={() => handleChainEndClick('left')}
+                  disabled={!selectedCard || currentPlayer !== 'player'}
+                  className={`flex-shrink-0 w-24 h-36 border-4 border-dashed rounded-lg flex items-center justify-center text-sm font-bold ${
+                    selectedCard && currentPlayer === 'player'
+                      ? 'border-cyan-400 bg-cyan-400/10 hover:bg-cyan-400/20 cursor-pointer'
+                      : 'border-gray-600 bg-gray-800/20'
+                  }`}
+                >
+                  LEFT
+                </button>
 
+                {chain.length === 0 ? (
+                  <div className="flex-1 text-center text-gray-500 py-12">Empty chain - play your first card!</div>
+                ) : (
+                  chain.map((card, idx) => <Card key={card.id + '-' + idx} card={card} disabled />)
+                )}
 
-              )}
+                <button
+                  onClick={() => handleChainEndClick('right')}
+                  disabled={!selectedCard || currentPlayer !== 'player'}
+                  className={`flex-shrink-0 w-24 h-36 border-4 border-dashed rounded-lg flex items-center justify-center text-sm font-bold ${
+                    selectedCard && currentPlayer === 'player'
+                      ? 'border-cyan-400 bg-cyan-400/10 hover:bg-cyan-400/20 cursor-pointer'
+                      : 'border-gray-600 bg-gray-800/20'
+                  }`}
+                >
+                  RIGHT
+                </button>
+              </div>
             </div>
           </div>
 
@@ -1034,4 +1029,3 @@ export default function EmUniGame() {
     </div>
   );
 }
-
