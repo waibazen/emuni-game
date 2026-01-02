@@ -144,25 +144,37 @@ const countConsecutiveForces = (chain, fromEnd = 'right') => {
   return count;
 };
 
-const isAdjacentToWiggle = (chain, position) => {
-  if (position === 'left') {
-    return chain.length > 0 && chain[0].type === CARD_TYPES.WIGGLE;
+const isAdjacentToWiggle = (chain, position, playedCard) => {
+  if (chain.length < 2) return false;
+
+  // Don't trigger UNIFY when playing Wiggle itself or Chaos
+  if (playedCard.type === CARD_TYPES.WIGGLE || playedCard.type === CARD_TYPES.CHAOS) {
+    return false;
   }
-  return chain.length > 0 && chain[chain.length - 1].type === CARD_TYPES.WIGGLE;
+
+  if (position === 'left') {
+    // Check if the card to the right (index 1) is a Wiggle
+    return chain[1].type === CARD_TYPES.WIGGLE;
+  } else {
+    // Check if the card to the left (second to last) is a Wiggle
+    return chain[chain.length - 2].type === CARD_TYPES.WIGGLE;
+  }
 };
 
 // Simple AI that makes random legal moves
-const getAIMove = (hand, chain) => {
+const getAIMove = (hand, chain, lockedEnd = null) => {
   const legalMoves = [];
 
   hand.forEach((card) => {
     const leftForces = countConsecutiveForces(chain, 'left');
     const rightForces = countConsecutiveForces(chain, 'right');
 
-    if (canConnectTo(card, chain[0], leftForces)) {
+    // Check left side (if not locked)
+    if (lockedEnd !== 'left' && canConnectTo(card, chain[0], leftForces)) {
       legalMoves.push({ card, position: 'left' });
     }
-    if (canConnectTo(card, chain[chain.length - 1], rightForces)) {
+    // Check right side (if not locked)
+    if (lockedEnd !== 'right' && canConnectTo(card, chain[chain.length - 1], rightForces)) {
       legalMoves.push({ card, position: 'right' });
     }
   });
@@ -267,6 +279,21 @@ export default function EmUniGame() {
   const [winner, setWinner] = useState(null);
   const [stats, setStats] = useState({ unifyAccepted: 0, unifyDeclined: 0 });
 
+  // Chaos card states
+  const [showSquishModal, setShowSquishModal] = useState(false);
+  const [showGaugeBreakModal, setShowGaugeBreakModal] = useState(false);
+  const [lockedEnd, setLockedEnd] = useState(null); // 'left' | 'right' | null
+  const [lockedUntilPlayer, setLockedUntilPlayer] = useState(null);
+  const [pendingChaosCard, setPendingChaosCard] = useState(null);
+  const [extraPlay, setExtraPlay] = useState(false);
+
+  // Hand limit states
+  const [showDiscardModal, setShowDiscardModal] = useState(false);
+  const [cardsToDiscard, setCardsToDiscard] = useState([]);
+
+  // Deadlock detection
+  const [consecutivePasses, setConsecutivePasses] = useState(0);
+
   // Initialize game
   const startGame = () => {
     const newDeck = shuffleDeck(createDeck());
@@ -285,6 +312,15 @@ export default function EmUniGame() {
     setSelectedCard(null);
     setWinner(null);
     setStats({ unifyAccepted: 0, unifyDeclined: 0 });
+    setShowSquishModal(false);
+    setShowGaugeBreakModal(false);
+    setLockedEnd(null);
+    setLockedUntilPlayer(null);
+    setPendingChaosCard(null);
+    setExtraPlay(false);
+    setShowDiscardModal(false);
+    setCardsToDiscard([]);
+    setConsecutivePasses(0);
   };
 
   // Initialize tutorial with scripted cards
@@ -473,10 +509,10 @@ export default function EmUniGame() {
         const newChain = [...chain, selectedCard];
         setChain(newChain);
 
-        // Check for UNIFY bonus
-        const adjacentToWiggle = newChain.length >= 2 && newChain[newChain.length - 2].type === CARD_TYPES.WIGGLE;
+        // Check for UNIFY bonus (using the fixed function)
+        const adjacentToWiggle = isAdjacentToWiggle(newChain, 'right', selectedCard);
 
-        if (adjacentToWiggle && selectedCard.type !== CARD_TYPES.CHAOS) {
+        if (adjacentToWiggle) {
           setShowUnifyModal(true);
         } else {
           setSelectedCard(null);
@@ -537,43 +573,86 @@ export default function EmUniGame() {
     const hand = isPlayer ? playerHand : aiHand;
     const setHand = isPlayer ? setPlayerHand : setAIHand;
 
+    // Reset consecutive passes (someone played)
+    setConsecutivePasses(0);
+
     // Remove from hand
     const newHand = hand.filter((c) => c.id !== card.id);
     setHand(newHand);
 
-    // Add to chain
+    // Handle Chaos cards
+    if (card.type === CARD_TYPES.CHAOS) {
+      setPendingChaosCard({ card, position, isPlayer });
+
+      if (card.chaosType === 'squish') {
+        const gravityCards = chain.filter(c => c.type === CARD_TYPES.GRAVITY);
+        if (gravityCards.length === 0) {
+          setMessage('Squish! played, but no Gravity cards in chain to remove.');
+          completeTurn(newHand, isPlayer);
+          return;
+        }
+        setShowSquishModal(true);
+        return; // Wait for selection
+      } else if (card.chaosType === 'gauge-break') {
+        setShowGaugeBreakModal(true);
+        return; // Wait for end selection
+      } else if (card.chaosType === 'big-bang') {
+        // Big Bang: All players draw 1, current player gets extra play
+        setMessage('💥 BIG BANG! Everyone draws 1 card!');
+        drawCard(true); // Player draws
+        drawCard(false); // AI draws
+        setExtraPlay(true);
+        completeTurn(newHand, isPlayer);
+        return;
+      }
+    }
+
+    // Add to chain (non-chaos)
     const newChain = position === 'left' ? [card, ...chain] : [...chain, card];
     setChain(newChain);
 
-    // UNIFY bonus
-    const adjacentToWiggle = isAdjacentToWiggle(newChain, position);
+    // UNIFY bonus (fixed to pass the played card)
+    const adjacentToWiggle = isAdjacentToWiggle(newChain, position, card);
 
-    if (adjacentToWiggle && isPlayer && card.type !== CARD_TYPES.CHAOS) {
+    if (adjacentToWiggle && isPlayer) {
       setShowUnifyModal(true);
       // pause turn until accept/decline
       return;
-    } else if (adjacentToWiggle && !isPlayer && card.type !== CARD_TYPES.CHAOS) {
+    } else if (adjacentToWiggle && !isPlayer) {
       // AI accepts UNIFY if hand < 5
-      if (aiHand.length < 5) {
+      if (newHand.length < 5) {
         drawCard(false);
         drawCard(false);
       }
     }
 
-    // Hand limit (7)
-    if (newHand.length > 7) {
-      setMessage(`${isPlayer ? 'You have' : 'AI has'} ${newHand.length} cards. Must discard to 7!`);
-      if (!isPlayer) {
-        const toDiscard = newHand.length - 7;
-        setHand(newHand.slice(toDiscard));
-      }
-    }
+    completeTurn(newHand, isPlayer);
+  };
 
+  // Complete turn after card played
+  const completeTurn = (newHand, isPlayer) => {
     // Win condition
     if (newHand.length === 0) {
       setWinner(isPlayer ? 'player' : 'ai');
       setGameState('ended');
       return;
+    }
+
+    // Check hand limit (7)
+    if (isPlayer && newHand.length > 7) {
+      setShowDiscardModal(true);
+      return; // Wait for discard
+    } else if (!isPlayer && newHand.length > 7) {
+      // AI auto-discards
+      const toDiscard = newHand.length - 7;
+      setAIHand(newHand.slice(toDiscard));
+    }
+
+    // Check for extra play (Big Bang!)
+    if (extraPlay) {
+      setExtraPlay(false);
+      setMessage('Extra play from Big Bang! Select another card.');
+      return; // Don't end turn
     }
 
     endTurn();
@@ -584,10 +663,16 @@ export default function EmUniGame() {
     drawCard(true);
     setStats((prev) => ({ ...prev, unifyAccepted: prev.unifyAccepted + 1 }));
     setShowUnifyModal(false);
-
-    // Hand limit check (best-effort message; state updates async)
     setMessage('UNIFY accepted! (Drew 2 cards)');
-    endTurn();
+
+    // Check hand limit after drawing
+    setTimeout(() => {
+      if (playerHand.length > 7) {
+        setShowDiscardModal(true);
+      } else {
+        endTurn();
+      }
+    }, 100);
   };
 
   const handleUnifyDecline = () => {
@@ -597,11 +682,61 @@ export default function EmUniGame() {
     endTurn();
   };
 
+  // Chaos card handlers
+  const handleSquishSelect = (cardToRemove) => {
+    setChain((prev) => prev.filter((c) => c.id !== cardToRemove.id));
+    setShowSquishModal(false);
+    setPendingChaosCard(null);
+    setMessage(`Squish! removed ${cardToRemove.name} from the chain!`);
+
+    const isPlayer = currentPlayer === 'player';
+    const newHand = isPlayer ? playerHand : aiHand;
+    completeTurn(newHand, isPlayer);
+  };
+
+  const handleGaugeBreakSelect = (selectedEnd) => {
+    setLockedEnd(selectedEnd);
+    setLockedUntilPlayer(currentPlayer);
+    setShowGaugeBreakModal(false);
+    setPendingChaosCard(null);
+    setMessage(`Gauge-Break! locked the ${selectedEnd.toUpperCase()} end for one round!`);
+
+    const isPlayer = currentPlayer === 'player';
+    const newHand = isPlayer ? playerHand : aiHand;
+    completeTurn(newHand, isPlayer);
+  };
+
+  // Discard handlers
+  const toggleDiscardSelection = (card) => {
+    setCardsToDiscard((prev) => {
+      if (prev.find((c) => c.id === card.id)) {
+        return prev.filter((c) => c.id !== card.id);
+      } else {
+        return [...prev, card];
+      }
+    });
+  };
+
+  const handleDiscard = () => {
+    setPlayerHand((prev) => prev.filter((c) => !cardsToDiscard.find((d) => d.id === c.id)));
+    setCardsToDiscard([]);
+    setShowDiscardModal(false);
+    setMessage('Discarded to hand limit.');
+    endTurn();
+  };
+
   const endTurn = () => {
     setSelectedCard(null);
     const nextPlayer = currentPlayer === 'player' ? 'ai' : 'player';
     setCurrentPlayer(nextPlayer);
     setTurnCount((t) => t + 1);
+
+    // Check if Gauge-Break lock expires (when original player's turn returns)
+    if (lockedEnd && lockedUntilPlayer === nextPlayer) {
+      setLockedEnd(null);
+      setLockedUntilPlayer(null);
+      setMessage(`${lockedEnd.toUpperCase()} end unlocked!`);
+    }
 
     if (nextPlayer === 'ai') {
       setMessage("AI's turn...");
@@ -618,12 +753,57 @@ export default function EmUniGame() {
     }
 
     setTimeout(() => {
-      const aiMove = getAIMove(aiHand, chain);
+      // Respect locked ends
+      const aiMove = getAIMove(aiHand, chain, lockedEnd);
 
       if (!aiMove) {
         setMessage('AI passes (no legal moves).');
+
+        // Track consecutive passes for deadlock
+        const newConsecutivePasses = consecutivePasses + 1;
+        setConsecutivePasses(newConsecutivePasses);
+
+        // Deadlock check
+        if (newConsecutivePasses >= 2) {
+          if (playerHand.length < aiHand.length) {
+            setWinner('player');
+            setMessage('Deadlock! You win with fewer cards!');
+          } else if (aiHand.length < playerHand.length) {
+            setWinner('ai');
+            setMessage('Deadlock! AI wins with fewer cards!');
+          } else {
+            setWinner('tie');
+            setMessage('Deadlock! Tie game!');
+          }
+          setGameState('ended');
+          return;
+        }
+
         setTimeout(() => endTurn(), 700);
         return;
+      }
+
+      // Handle AI chaos cards
+      if (aiMove.card.type === CARD_TYPES.CHAOS) {
+        if (aiMove.card.chaosType === 'squish') {
+          // AI automatically picks first gravity card
+          const gravityCards = chain.filter(c => c.type === CARD_TYPES.GRAVITY);
+          if (gravityCards.length > 0) {
+            setTimeout(() => {
+              setChain(prev => prev.filter(c => c.id !== gravityCards[0].id));
+              setMessage(`AI played Squish! and removed ${gravityCards[0].name}!`);
+            }, 500);
+          }
+        } else if (aiMove.card.chaosType === 'gauge-break') {
+          // AI locks random end
+          const ends = ['left', 'right'];
+          const randomEnd = ends[Math.floor(Math.random() * ends.length)];
+          setTimeout(() => {
+            setLockedEnd(randomEnd);
+            setLockedUntilPlayer('ai');
+            setMessage(`AI played Gauge-Break! and locked the ${randomEnd.toUpperCase()} end!`);
+          }, 500);
+        }
       }
 
       playCard(aiMove.card, aiMove.position);
@@ -646,16 +826,22 @@ export default function EmUniGame() {
 
   const handleChainEndClick = (position) => {
     if (!selectedCard || currentPlayer !== 'player') return;
-    
-    // FIX: Handle empty chain - any card can be played
+
+    // Check if this end is locked
+    if (lockedEnd === position) {
+      setMessage(`Cannot play to ${position.toUpperCase()} end - locked by Gauge-Break!`);
+      return;
+    }
+
+    // Handle empty chain - any card can be played
     if (chain.length === 0) {
       playCard(selectedCard, position);
       return;
     }
-    
+
     const endCard = position === 'left' ? chain[0] : chain[chain.length - 1];
     const consecutiveForces = countConsecutiveForces(chain, position);
-    
+
     if (canConnectTo(selectedCard, endCard, consecutiveForces)) {
       playCard(selectedCard, position);
     } else {
@@ -667,6 +853,28 @@ export default function EmUniGame() {
   const handlePass = () => {
     if (currentPlayer !== 'player') return;
     setMessage('You passed.');
+
+    // Track consecutive passes for deadlock detection (2-player game = 2 passes)
+    const newConsecutivePasses = consecutivePasses + 1;
+    setConsecutivePasses(newConsecutivePasses);
+
+    // Deadlock: both players passed (in 2-player game)
+    if (newConsecutivePasses >= 2) {
+      // Determine winner by fewest cards
+      if (playerHand.length < aiHand.length) {
+        setWinner('player');
+        setMessage('Deadlock! You win with fewer cards!');
+      } else if (aiHand.length < playerHand.length) {
+        setWinner('ai');
+        setMessage('Deadlock! AI wins with fewer cards!');
+      } else {
+        setWinner('tie');
+        setMessage('Deadlock! Tie game!');
+      }
+      setGameState('ended');
+      return;
+    }
+
     endTurn();
   };
 
@@ -899,14 +1107,18 @@ export default function EmUniGame() {
               <div className="flex gap-4 overflow-x-auto pb-4 items-center">
                 <button
                   onClick={() => handleChainEndClick('left')}
-                  disabled={!selectedCard || currentPlayer !== 'player'}
-                  className={`flex-shrink-0 w-24 h-36 border-4 border-dashed rounded-lg flex items-center justify-center text-sm font-bold ${
-                    selectedCard && currentPlayer === 'player'
+                  disabled={!selectedCard || currentPlayer !== 'player' || lockedEnd === 'left'}
+                  className={`flex-shrink-0 w-24 h-36 border-4 border-dashed rounded-lg flex flex-col items-center justify-center text-sm font-bold ${
+                    lockedEnd === 'left'
+                      ? 'border-red-500 bg-red-500/20 cursor-not-allowed'
+                      : selectedCard && currentPlayer === 'player'
                       ? 'border-cyan-400 bg-cyan-400/10 hover:bg-cyan-400/20 cursor-pointer'
                       : 'border-gray-600 bg-gray-800/20'
                   }`}
                 >
+                  {lockedEnd === 'left' ? <div className="text-2xl mb-1">🔒</div> : null}
                   LEFT
+                  {lockedEnd === 'left' ? <div className="text-xs mt-1">LOCKED</div> : null}
                 </button>
 
                 {chain.length === 0 ? (
@@ -917,14 +1129,18 @@ export default function EmUniGame() {
 
                 <button
                   onClick={() => handleChainEndClick('right')}
-                  disabled={!selectedCard || currentPlayer !== 'player'}
-                  className={`flex-shrink-0 w-24 h-36 border-4 border-dashed rounded-lg flex items-center justify-center text-sm font-bold ${
-                    selectedCard && currentPlayer === 'player'
+                  disabled={!selectedCard || currentPlayer !== 'player' || lockedEnd === 'right'}
+                  className={`flex-shrink-0 w-24 h-36 border-4 border-dashed rounded-lg flex flex-col items-center justify-center text-sm font-bold ${
+                    lockedEnd === 'right'
+                      ? 'border-red-500 bg-red-500/20 cursor-not-allowed'
+                      : selectedCard && currentPlayer === 'player'
                       ? 'border-cyan-400 bg-cyan-400/10 hover:bg-cyan-400/20 cursor-pointer'
                       : 'border-gray-600 bg-gray-800/20'
                   }`}
                 >
+                  {lockedEnd === 'right' ? <div className="text-2xl mb-1">🔒</div> : null}
                   RIGHT
+                  {lockedEnd === 'right' ? <div className="text-xs mt-1">LOCKED</div> : null}
                 </button>
               </div>
             </div>
@@ -933,7 +1149,11 @@ export default function EmUniGame() {
           {/* Player Hand */}
           <div>
             <div className="flex justify-between items-center mb-2">
-              <div className="text-sm text-gray-400">Your Hand ({playerHand.length}/7 cards)</div>
+              <div className={`text-sm font-bold ${playerHand.length === 7 ? 'text-yellow-400' : playerHand.length > 7 ? 'text-red-400 animate-pulse' : 'text-gray-400'}`}>
+                Your Hand ({playerHand.length}/7 cards)
+                {playerHand.length === 7 && ' ⚠️ AT LIMIT'}
+                {playerHand.length > 7 && ' 🚨 OVER LIMIT!'}
+              </div>
               {currentPlayer === 'player' && (
                 <button
                   onClick={handlePass}
@@ -966,8 +1186,12 @@ export default function EmUniGame() {
       {/* End */}
       {gameState === 'ended' && (
         <div className="max-w-2xl mx-auto text-center py-20">
-          <div className="text-6xl mb-4">{winner === 'player' ? '🏆' : '🤖'}</div>
-          <h2 className="text-4xl font-bold mb-4">{winner === 'player' ? 'YOU WIN!' : 'AI WINS!'}</h2>
+          <div className="text-6xl mb-4">
+            {winner === 'player' ? '🏆' : winner === 'ai' ? '🤖' : '🤝'}
+          </div>
+          <h2 className="text-4xl font-bold mb-4">
+            {winner === 'player' ? 'YOU WIN!' : winner === 'ai' ? 'AI WINS!' : 'TIE GAME!'}
+          </h2>
           <div className="text-xl text-gray-300 mb-8">Game ended on turn {turnCount}</div>
 
           <div className="bg-white/5 rounded-lg p-6 border border-white/10 mb-8">
@@ -1019,6 +1243,84 @@ export default function EmUniGame() {
                 ? '💡 Tutorial: Click YES to continue learning!'
                 : '💡 Tip: Decline in late game to empty your hand faster!'}
             </p>
+          </div>
+        </div>
+      )}
+
+      {/* Squish! Modal */}
+      {showSquishModal && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50">
+          <div className="bg-gradient-to-br from-slate-900 to-orange-900 border-4 border-orange-400 rounded-xl p-8 max-w-4xl">
+            <div className="text-4xl text-center mb-4">💥 SQUISH! 💥</div>
+            <p className="text-xl text-center mb-6">Select a Gravity card to remove from the chain:</p>
+            <div className="flex gap-4 flex-wrap justify-center mb-6">
+              {chain.filter(c => c.type === CARD_TYPES.GRAVITY).map((card) => (
+                <Card
+                  key={card.id}
+                  card={card}
+                  onClick={() => handleSquishSelect(card)}
+                />
+              ))}
+            </div>
+            <p className="text-xs text-gray-400 text-center">Click a Gravity card to squish it!</p>
+          </div>
+        </div>
+      )}
+
+      {/* Gauge-Break! Modal */}
+      {showGaugeBreakModal && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50">
+          <div className="bg-gradient-to-br from-slate-900 to-red-900 border-4 border-red-400 rounded-xl p-8 max-w-md">
+            <div className="text-4xl text-center mb-4">🔒 GAUGE-BREAK! 🔒</div>
+            <p className="text-xl text-center mb-6">Select which end to lock for one round:</p>
+            <div className="flex gap-4">
+              <button
+                onClick={() => handleGaugeBreakSelect('left')}
+                className="flex-1 px-8 py-6 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 rounded-lg font-bold text-2xl"
+              >
+                ← LEFT
+              </button>
+              <button
+                onClick={() => handleGaugeBreakSelect('right')}
+                className="flex-1 px-8 py-6 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 rounded-lg font-bold text-2xl"
+              >
+                RIGHT →
+              </button>
+            </div>
+            <p className="text-xs text-gray-400 text-center mt-4">
+              Opponents cannot play to the locked end until your next turn!
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Discard Modal */}
+      {showDiscardModal && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50">
+          <div className="bg-gradient-to-br from-slate-900 to-red-900 border-4 border-red-400 rounded-xl p-8 max-w-6xl">
+            <div className="text-3xl text-center mb-4">⚠️ HAND LIMIT EXCEEDED ⚠️</div>
+            <p className="text-xl text-center mb-6">
+              You have {playerHand.length} cards. Select {playerHand.length - 7} to discard:
+            </p>
+            <div className="flex gap-4 flex-wrap justify-center mb-6 max-h-96 overflow-y-auto p-4">
+              {playerHand.map((card) => (
+                <Card
+                  key={card.id}
+                  card={card}
+                  onClick={() => toggleDiscardSelection(card)}
+                  highlight={cardsToDiscard.find(c => c.id === card.id)}
+                />
+              ))}
+            </div>
+            <div className="text-center">
+              <button
+                disabled={cardsToDiscard.length !== playerHand.length - 7}
+                onClick={handleDiscard}
+                className="px-8 py-4 bg-red-600 rounded-lg font-bold text-xl disabled:opacity-50 disabled:cursor-not-allowed hover:bg-red-700"
+              >
+                Discard {cardsToDiscard.length}/{playerHand.length - 7} Selected
+              </button>
+            </div>
           </div>
         </div>
       )}
