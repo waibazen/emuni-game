@@ -280,7 +280,7 @@ export default function EmUniGame() {
     setChain([]);
     setCurrentPlayer('player');
     setTurnCount(1);
-    setMessage('Your turn! Draw a card.');
+    setMessage('Your turn! Select a card to play (no draw on first turn).');
     setGameState('playing');
     setSelectedCard(null);
     setWinner(null);
@@ -607,7 +607,7 @@ export default function EmUniGame() {
       setMessage("AI's turn...");
       setTimeout(() => executeAITurn(), 800);
     } else {
-      setMessage('Your turn! Draw a card.');
+      setMessage('Your turn! Select a card to play.');
     }
   };
 
@@ -635,17 +635,13 @@ export default function EmUniGame() {
 
     const isFirstTurn = turnCount === 1;
 
-    let prompt = 'Click LEFT or RIGHT to play this card.';
-
-    if (isFirstTurn) {
-      // First turn: draw card
+    // Draw card (skip on first turn per game rules)
+    if (!isFirstTurn && deck.length > 0) {
       drawCard(true);
-      setTurnCount(2);
-      prompt = 'Card drawn! Now choose where to place your first card.';
     }
 
     setSelectedCard(card);
-    setMessage(prompt);
+    setMessage('Click LEFT or RIGHT to play this card.');
   };
 
   const handleChainEndClick = (position) => {
