@@ -783,27 +783,57 @@ export default function EmUniGame() {
         return;
       }
 
-      // Handle AI chaos cards
+      // Handle AI chaos cards separately (don't use player modals)
       if (aiMove.card.type === CARD_TYPES.CHAOS) {
+        // Remove card from AI hand
+        const newAIHand = aiHand.filter(c => c.id !== aiMove.card.id);
+        setAIHand(newAIHand);
+        setConsecutivePasses(0);
+
+        // Check win condition
+        if (newAIHand.length === 0) {
+          setWinner('ai');
+          setGameState('ended');
+          setMessage('AI wins!');
+          return;
+        }
+
         if (aiMove.card.chaosType === 'squish') {
           // AI automatically picks first gravity card
           const gravityCards = chain.filter(c => c.type === CARD_TYPES.GRAVITY);
           if (gravityCards.length > 0) {
-            setTimeout(() => {
-              setChain(prev => prev.filter(c => c.id !== gravityCards[0].id));
-              setMessage(`AI played Squish! and removed ${gravityCards[0].name}!`);
-            }, 500);
+            setChain(prev => prev.filter(c => c.id !== gravityCards[0].id));
+            setMessage(`AI played Squish! and removed ${gravityCards[0].name}!`);
+          } else {
+            setMessage('AI played Squish! but no Gravity cards in chain.');
           }
+          setTimeout(() => endTurn(), 700);
         } else if (aiMove.card.chaosType === 'gauge-break') {
           // AI locks random end
           const ends = ['left', 'right'];
           const randomEnd = ends[Math.floor(Math.random() * ends.length)];
+          setLockedEnd(randomEnd);
+          setLockedUntilPlayer('ai');
+          setMessage(`AI played Gauge-Break! and locked the ${randomEnd.toUpperCase()} end!`);
+          setTimeout(() => endTurn(), 700);
+        } else if (aiMove.card.chaosType === 'big-bang') {
+          // Big Bang: All players draw 1
+          setMessage('AI played Big Bang! Everyone draws 1 card!');
+          drawCard(true); // Player draws
+          drawCard(false); // AI draws
+
+          // Check hand limit for AI after drawing
           setTimeout(() => {
-            setLockedEnd(randomEnd);
-            setLockedUntilPlayer('ai');
-            setMessage(`AI played Gauge-Break! and locked the ${randomEnd.toUpperCase()} end!`);
-          }, 500);
+            if (newAIHand.length + 1 > 7) {
+              const toDiscard = newAIHand.length + 1 - 7;
+              setAIHand(prev => prev.slice(toDiscard));
+            }
+            setMessage("AI's extra play from Big Bang...");
+            // AI gets another turn
+            setTimeout(() => executeAITurn(), 800);
+          }, 700);
         }
+        return; // Don't call playCard for AI chaos cards
       }
 
       playCard(aiMove.card, aiMove.position);
